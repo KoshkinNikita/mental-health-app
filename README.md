@@ -2,10 +2,14 @@
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue)
 ![PyQt5](https://img.shields.io/badge/PyQt-5.15-orange)
-![License](https://img.shields.io/badge/License-MIT-green)
 ![TensorFlow](https://img.shields.io/badge/TensorFlow-2.13-orange)
 ![SQLite](https://img.shields.io/badge/SQLite-3-blue)
 ![Build](https://img.shields.io/badge/Build-Passing-brightgreen)
+
+> Данный репозиторий создан исключительно в учебных целях.  
+> Код доступен для ознакомления, но не для копирования,  
+> распространения или коммерческого использования.  
+> Все права защищены. © 2026
 
 Приложение для поддержки ментального здоровья с использованием методов КПТ (когнитивно-поведенческая терапия).
 
