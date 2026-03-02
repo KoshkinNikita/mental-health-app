@@ -1,5 +1,12 @@
 # 🌿 Тёплое убежище
 
+![Python](https://img.shields.io/badge/Python-3.11-blue)
+![PyQt5](https://img.shields.io/badge/PyQt-5.15-orange)
+![License](https://img.shields.io/badge/License-MIT-green)
+![TensorFlow](https://img.shields.io/badge/TensorFlow-2.13-orange)
+![SQLite](https://img.shields.io/badge/SQLite-3-blue)
+![Build](https://img.shields.io/badge/Build-Passing-brightgreen)
+
 Приложение для поддержки ментального здоровья с использованием методов КПТ (когнитивно-поведенческая терапия).
 
 ## 📱 Возможности
@@ -44,3 +51,4 @@ python main.py
 - **TensorFlow** - нейросети
 
 - **Pygame** - аудио
+
