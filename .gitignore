@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+pythonenv.*
+
+# База данных
+*.db
+*.db-journal
+
+# Музыкальные файлы (чтобы не загружать большие файлы)
+assets/music/*.mp3
+assets/music/*.wav
+assets/music/*.ogg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+# Логи
+*.log
+
+# Билды
+dist/
+build/
+*.spec
