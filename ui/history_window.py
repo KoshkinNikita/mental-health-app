@@ -172,6 +172,91 @@ class HistoryWindow(QWidget):
             distortions_label.setWordWrap(True)
             layout.addWidget(distortions_label)
 
+        exercises = self.parent.db.get_exercise_feedback_for_entry(entry['id'])
+        if exercises:
+            exercises_frame = QFrame()
+            exercises_frame.setStyleSheet("""
+                    QFrame {
+                        background-color: #F8F2E9;
+                        border-radius: 8px;
+                        padding: 8px;
+                    }
+                """)
+
+            exercises_layout = QVBoxLayout(exercises_frame)
+            exercises_layout.setSpacing(5)
+
+            ex_title = QLabel("🧘 Связанные упражнения:")
+            ex_title.setStyleSheet("font-weight: bold; font-size: 12px;")
+            exercises_layout.addWidget(ex_title)
+
+            for ex in exercises:
+                ex_frame = QFrame()
+                ex_layout = QHBoxLayout(ex_frame)
+                ex_layout.setContentsMargins(0, 0, 0, 0)
+                ex_layout.setSpacing(8)
+
+                # Название упражнения
+                ex_name = QLabel(f"• {ex['exercise_name']}")
+                ex_name.setWordWrap(True)
+                ex_name.setStyleSheet("font-size: 12px;")
+                ex_layout.addWidget(ex_name, 1)
+
+                # Оценка
+                if ex['helped'] == 1:
+                    helped_label = QLabel("✅ Помогло")
+                    helped_label.setStyleSheet("color: #06D6A0; font-size: 11px;")
+                    ex_layout.addWidget(helped_label)
+                elif ex['helped'] == -1:
+                    helped_label = QLabel("❌ Не помогло")
+                    helped_label.setStyleSheet("color: #FF6B6B; font-size: 11px;")
+                    ex_layout.addWidget(helped_label)
+                else:
+                    # Кнопки для оценки
+                    helped_frame = QFrame()
+                    helped_layout = QHBoxLayout(helped_frame)
+                    helped_layout.setContentsMargins(0, 0, 0, 0)
+                    helped_layout.setSpacing(5)
+
+                    yes_btn = QPushButton("👍")
+                    yes_btn.setFixedSize(25, 25)
+                    yes_btn.setStyleSheet("""
+                            QPushButton {
+                                background-color: #B5E5CF;
+                                border: none;
+                                border-radius: 12px;
+                                font-size: 12px;
+                            }
+                            QPushButton:hover {
+                                background-color: #9BD1B8;
+                            }
+                        """)
+                    yes_btn.clicked.connect(lambda _, eid=ex['id']: self.rate_exercise(eid, True))
+
+                    no_btn = QPushButton("👎")
+                    no_btn.setFixedSize(25, 25)
+                    no_btn.setStyleSheet("""
+                            QPushButton {
+                                background-color: #FFD6DC;
+                                border: none;
+                                border-radius: 12px;
+                                font-size: 12px;
+                            }
+                            QPushButton:hover {
+                                background-color: #FFC8D6;
+                            }
+                        """)
+                    no_btn.clicked.connect(lambda _, eid=ex['id']: self.rate_exercise(eid, False))
+
+                    helped_layout.addWidget(yes_btn)
+                    helped_layout.addWidget(no_btn)
+                    ex_layout.addWidget(helped_frame)
+
+                exercises_layout.addWidget(ex_frame)
+
+            # Добавляем рамку с упражнениями в layout ТОЛЬКО если она создана
+            layout.addWidget(exercises_frame)
+
         # Кнопка детального просмотра
         view_btn = QPushButton("👁️ Подробнее")
         view_btn.setProperty("class", "SecondaryButton")
@@ -181,6 +266,25 @@ class HistoryWindow(QWidget):
         layout.addWidget(view_btn, 0, Qt.AlignRight)
 
         return card
+
+    def rate_exercise(self, feedback_id, helped):
+        """Оценить упражнение"""
+        # Обновляем в БД
+        cursor = self.parent.db.conn.cursor()
+        value = 1 if helped else -1
+        cursor.execute('''
+            UPDATE exercise_feedback 
+            SET helped = ? 
+            WHERE id = ?
+        ''', (value, feedback_id))
+        self.parent.db.conn.commit()
+
+        # Обновляем отображение
+        self.update_display()
+
+        # Показываем сообщение
+        QMessageBox.information(self, "Спасибо!",
+                                "Спасибо за обратную связь! Это поможет системе стать умнее.")
 
     def show_entry_details(self, entry):
         """Показать детали записи"""

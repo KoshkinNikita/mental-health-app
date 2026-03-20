@@ -141,6 +141,20 @@ class DatabaseManager:
             )
         ''')
 
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS exercise_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                entry_id INTEGER NOT NULL,
+                exercise_name TEXT NOT NULL,
+                helped INTEGER DEFAULT 0,  -- 1 = помогло, -1 = не помогло, 0 = не оценено
+                feedback_text TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id),
+                FOREIGN KEY (entry_id) REFERENCES diary_entries (id)
+            )
+        ''')
+
         self.create_base_achievements()
         self.conn.commit()
 
@@ -553,6 +567,56 @@ class DatabaseManager:
         if result:
             return json.loads(result['profile_data'])
         return None
+
+    def save_exercise_feedback(self, user_id, entry_id, exercise_name, helped, feedback_text=None):
+        """Сохранить обратную связь по упражнению"""
+        cursor = self.conn.cursor()
+        helped_value = 1 if helped else -1 if helped is not None else 0
+
+        cursor.execute('''
+            INSERT INTO exercise_feedback (user_id, entry_id, exercise_name, helped, feedback_text)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, entry_id, exercise_name, helped_value, feedback_text))
+
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def get_exercise_feedback_for_entry(self, entry_id):
+        """Получить обратную связь для конкретной записи"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT * FROM exercise_feedback 
+            WHERE entry_id = ?
+            ORDER BY created_at DESC
+        ''', (entry_id,))
+        return cursor.fetchall()
+
+    def get_effectiveness_stats(self, user_id, exercise_name=None):
+        """Получить статистику эффективности упражнений"""
+        cursor = self.conn.cursor()
+
+        if exercise_name:
+            cursor.execute('''
+                SELECT 
+                    COUNT(*) as total,
+                    SUM(CASE WHEN helped = 1 THEN 1 ELSE 0 END) as helped_count,
+                    SUM(CASE WHEN helped = -1 THEN 1 ELSE 0 END) as not_helped_count
+                FROM exercise_feedback
+                WHERE user_id = ? AND exercise_name = ?
+            ''', (user_id, exercise_name))
+        else:
+            cursor.execute('''
+                SELECT 
+                    exercise_name,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN helped = 1 THEN 1 ELSE 0 END) as helped_count
+                FROM exercise_feedback
+                WHERE user_id = ?
+                GROUP BY exercise_name
+                ORDER BY helped_count DESC
+            ''', (user_id,))
+
+        return cursor.fetchall()
 
     def close(self):
         """Закрытие соединения с БД"""
