@@ -19,6 +19,9 @@ class DiaryWindow(QWidget):
         super().__init__()
         self.parent = parent
         self.current_user = None
+        self.similarity_analyzer = None
+        self.pause_timer = None
+        self.notification_widget = None
         self.init_ui()
 
     def set_current_user(self, user):
@@ -60,8 +63,9 @@ class DiaryWindow(QWidget):
         form_card = self.create_diary_form()
         content_layout.addWidget(form_card)
 
-        self.tips_widget = self.create_tips_widget()
-        content_layout.addWidget(self.tips_widget)
+        # Виджет для уведомлений (скрытый)
+        self.notification_widget = self.create_notification_widget()
+        content_layout.addWidget(self.notification_widget)
 
         # Примеры записей
         examples_card = self.create_examples_card()
@@ -81,7 +85,6 @@ class DiaryWindow(QWidget):
         top_layout = QHBoxLayout(top_bar)
         top_layout.setContentsMargins(30, 0, 30, 0)
 
-        # Кнопка назад
         back_btn = QPushButton("← Назад")
         back_btn.setProperty("class", "SecondaryButton")
         back_btn.clicked.connect(
@@ -91,14 +94,12 @@ class DiaryWindow(QWidget):
 
         top_layout.addStretch()
 
-        # Название
         title = QLabel("Дневник мыслей")
         title.setProperty("class", "TitleMedium")
         top_layout.addWidget(title)
 
         top_layout.addStretch()
 
-        # Кнопка сохранения
         save_btn = QPushButton("💾 Сохранить")
         save_btn.setProperty("class", "PrimaryButton")
         save_btn.clicked.connect(self.save_entry)
@@ -130,6 +131,61 @@ class DiaryWindow(QWidget):
 
         return card
 
+    def create_notification_widget(self):
+        """Создание виджета для уведомлений"""
+        widget = QFrame()
+        widget.setProperty("class", "MintCard")
+        widget.setVisible(False)
+
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+
+        # Заголовок
+        title_frame = QFrame()
+        title_layout = QHBoxLayout(title_frame)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+
+        icon = QLabel("💡")
+        icon.setStyleSheet("font-size: 20px;")
+        title_layout.addWidget(icon)
+
+        title = QLabel("Найдены похожие ситуации")
+        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        title_layout.addWidget(title)
+        title_layout.addStretch()
+
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(20, 20)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                color: #C4B6A6;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                color: #FF6B6B;
+            }
+        """)
+        close_btn.clicked.connect(lambda: widget.setVisible(False))
+        title_layout.addWidget(close_btn)
+
+        layout.addWidget(title_frame)
+
+        # Контейнер для списка похожих
+        self.notification_list = QVBoxLayout()
+        layout.addLayout(self.notification_list)
+
+        # Кнопка "Показать все"
+        show_all_btn = QPushButton("🔍 Показать все похожие")
+        show_all_btn.setProperty("class", "SecondaryButton")
+        show_all_btn.setFixedHeight(30)
+        show_all_btn.clicked.connect(self.show_all_similar)
+        layout.addWidget(show_all_btn)
+
+        return widget
+
     def create_diary_form(self):
         """Форма для записи мыслей"""
         card = QFrame()
@@ -150,6 +206,11 @@ class DiaryWindow(QWidget):
         self.situation_input.setPlaceholderText("Опишите ситуацию, которая вызвала эмоциональную реакцию...")
         self.situation_input.setMaximumHeight(100)
         layout.addWidget(self.situation_input)
+
+        help_button = QPushButton("💡 Нужна подсказка?")
+        help_button.setProperty("class", "SecondaryButton")
+        help_button.clicked.connect(self.find_similar_situations)
+        layout.addWidget(help_button)
 
         # Эмоции
         emotions_label = QLabel("2. Эмоции и их интенсивность (0-100%):")
@@ -201,7 +262,6 @@ class DiaryWindow(QWidget):
             slider.valueChanged.connect(
                 lambda value, lbl=value_label: lbl.setText(f"{value}%")
             )
-            slider.sliderPressed.connect(lambda e=emotion: self.on_emotion_focus(e))
 
             self.emotion_inputs[emotion] = slider
             emotions_layout.addWidget(emotion_frame)
@@ -215,7 +275,7 @@ class DiaryWindow(QWidget):
         layout.addWidget(thoughts_label)
 
         self.thoughts_input = QTextEdit()
-        self.thoughts_input.setPlaceholderText("Запишите мысли, которые пришли в голову в этой ситуации...")
+        self.thoughts_input.setPlaceholderText("Запишите мысли, которые пришли в голову...")
         self.thoughts_input.setMaximumHeight(100)
         layout.addWidget(self.thoughts_input)
 
@@ -272,7 +332,7 @@ class DiaryWindow(QWidget):
         layout.addWidget(alternative_label)
 
         self.alternative_input = QTextEdit()
-        self.alternative_input.setPlaceholderText("Попробуйте найти более сбалансированный взгляд на ситуацию...")
+        self.alternative_input.setPlaceholderText("Попробуйте найти более сбалансированный взгляд...")
         self.alternative_input.setMaximumHeight(100)
         layout.addWidget(self.alternative_input)
 
@@ -371,443 +431,249 @@ class DiaryWindow(QWidget):
 
         return card
 
-    def save_entry(self):
-        """Сохранение записи в дневнике"""
-        try:
-            if not self.parent.current_user:
-                QMessageBox.warning(self, "Ошибка", "Вы не авторизованы. Войдите в систему.")
-                return
+    # ==================== ПОИСК ПОХОЖИХ СИТУАЦИЙ ====================
 
-            situation = self.situation_input.toPlainText().strip()
-            thoughts = self.thoughts_input.toPlainText().strip()
-
-            if not situation or not thoughts:
-                QMessageBox.warning(self, "Внимание",
-                                    "Пожалуйста, заполните обязательные поля: Ситуация и Автоматические мысли.")
-                return
-
-            # Собираем эмоции
-            emotions_data = {}
-            for emotion, slider in self.emotion_inputs.items():
-                emotions_data[emotion] = slider.value()
-
-            # Собираем искажения
-            distortions = []
-            for name, checkbox in self.distortion_checks.items():
-                if checkbox.isChecked():
-                    distortions.append(name)
-
-            alternative = self.alternative_input.toPlainText().strip()
-            reassessment = self.reassessment_input.toPlainText().strip()
-
-            # Сохраняем в БД
-            user_id = self.parent.current_user['id']
-            entry_id = self.parent.db.save_diary_entry(
-                user_id=user_id,
-                situation=situation,
-                emotions=emotions_data,
-                thoughts=thoughts,
-                distortions=distortions,
-                alternative_thought=alternative if alternative else None,
-                reassessment=reassessment if reassessment else None
-            )
-
-            if entry_id:
-                # Обновляем статистику
-                stats = self.parent.db.get_user_stats(user_id)
-                if stats:
-                    new_total = stats["total_entries"] + 1
-                    self.parent.db.update_user_stats(user_id, {'total_entries': new_total})
-
-                self.update_streak_days()
-
-                # Проверяем достижения
-                new_achievements = self.parent.db.check_achievements(user_id)
-                if new_achievements:
-                    self.show_achievement_notification(new_achievements)
-
-                QMessageBox.information(
-                    self,
-                    "Сохранено",
-                    f"✅ Запись успешно сохранена!\n\n"
-                    f"Выявлено искажений: {len(distortions)}\n"
-                    f"Это важный шаг к осознанности!"
-                )
-
-                self.clear_form()
-
-                # Обновляем главное меню
-                if hasattr(self.parent, 'main_menu'):
-                    self.parent.main_menu.update_display()
-            else:
-                QMessageBox.warning(self, "Ошибка", "Не удалось сохранить запись")
-
-        except Exception as e:
-            print(f"Ошибка сохранения записи: {e}")
-            QMessageBox.critical(self, "Ошибка", f"Ошибка сохранения записи: {str(e)}")
-
-    def clear_form(self):
-        """Очистка формы"""
-        self.situation_input.clear()
-        self.thoughts_input.clear()
-        self.alternative_input.clear()
-        self.reassessment_input.clear()
-
-        for slider in self.emotion_inputs.values():
-            slider.setValue(0)
-
-        for checkbox in self.distortion_checks.values():
-            checkbox.setChecked(False)
-
-    def update_streak_days(self):
-        """Обновление дней подряд"""
-        if not self.parent.current_user:
-            return
-
-        user_id = self.parent.current_user['id']
-        stats = self.parent.db.get_user_stats(user_id)
-
-        today = datetime.now().strftime('%Y-%m-%d')
-        last_date = stats.get('last_activity_date')
-
-        if last_date:
-            last_dt = datetime.strptime(last_date, '%Y-%m-%d')
-            today_dt = datetime.strptime(today, '%Y-%m-%d')
-
-            if (today_dt - last_dt).days == 1:
-                new_streak = stats['streak_days'] + 1
-            elif (today_dt - last_dt).days == 0:
-                new_streak = stats['streak_days']
-            else:
-                new_streak = 1
-        else:
-            new_streak = 1
-
-        self.parent.db.update_user_stats(user_id, {
-            'streak_days': new_streak,
-            'last_activity_date': today
-        })
-
-    def create_tips_widget(self):
-        """Создание виджета интеллектуальных подсказок"""
-        self.tips_card = QFrame()
-        self.tips_card.setProperty("class", "MintCard")
-        self.tips_card.setVisible(False)  # По умолчанию скрыт
-
-        layout = QVBoxLayout(self.tips_card)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
-
-        # Заголовок с иконкой
-        title_frame = QFrame()
-        title_layout = QHBoxLayout(title_frame)
-        title_layout.setContentsMargins(0, 0, 0, 0)
-
-        icon = QLabel("💡")
-        icon.setStyleSheet("font-size: 24px;")
-        title_layout.addWidget(icon)
-
-        title = QLabel("Интеллектуальные подсказки")
-        title.setProperty("class", "TitleSmall")
-        title_layout.addWidget(title)
-        title_layout.addStretch()
-
-        layout.addWidget(title_frame)
-
-        # Контейнер для подсказок
-        self.tips_container = QWidget()
-        self.tips_container_layout = QVBoxLayout(self.tips_container)
-        self.tips_container_layout.setSpacing(10)
-        self.tips_container_layout.setContentsMargins(0, 0, 0, 0)
-
-        layout.addWidget(self.tips_container)
-
-        return self.tips_card
-
-    def update_tips(self):
-        """Обновление подсказок на основе введенного текста"""
-        if not self.parent.current_user:
-            return
-
+    def find_similar_situations(self):
+        """Поиск похожих ситуаций по кнопке"""
         situation = self.situation_input.toPlainText().strip()
 
-        # Показываем подсказки только если введено больше 20 символов
         if len(situation) < 20:
-            self.tips_card.setVisible(False)
+            QMessageBox.information(self, "Подсказка",
+                                    "Опишите ситуацию подробнее (минимум 20 символов)")
             return
 
-        # Создаем анализатор при необходимости
-        if not hasattr(self, 'similarity_analyzer'):
-            from ai.similarity_analyzer import SimilarityAnalyzer
+        from ai.similarity_analyzer import SimilarityAnalyzer
+        if not self.similarity_analyzer:
             self.similarity_analyzer = SimilarityAnalyzer(self.parent.db)
 
-        # Получаем подсказки
-        tips = self.similarity_analyzer.get_tips_for_situation(
+        similar = self.similarity_analyzer.find_similar_situations(
             self.parent.current_user['id'],
             situation,
-            {k: v.value() for k, v in self.emotion_inputs.items()}
+            limit=5
         )
 
-        # Очищаем старые подсказки
-        while self.tips_container_layout.count():
-            item = self.tips_container_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        self.show_similar_dialog(similar)
 
-        if tips:
-            for tip in tips:
-                tip_card = self.create_tip_card(tip)
-                self.tips_container_layout.addWidget(tip_card)
-            self.tips_card.setVisible(True)
-        else:
-            # Если нет похожих ситуаций, показываем общую подсказку
-            self.show_general_tips()
-            self.tips_card.setVisible(True)
-
-    def create_tip_card(self, tip):
-        """Создание карточки подсказки"""
-        card = QFrame()
-
-        # Определяем цвет в зависимости от схожести
-        if tip['similarity'] > 70:
-            color = "#B5E5CF"  # Мятный - очень похоже
-        elif tip['similarity'] > 40:
-            color = "#FFD6DC"  # Розовый - средне
-        else:
-            color = "#F8F2E9"  # Бежевый - немного похоже
-
-        card.setStyleSheet(f"""
-            QFrame {{
-                background-color: {color};
-                border-radius: 10px;
-                border: 1px solid #E8DFD8;
-                padding: 10px;
-            }}
+    def show_similar_dialog(self, similar):
+        """Показать диалог с похожими ситуациями"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("🔍 Похожие ситуации")
+        dialog.resize(550, 500)
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #FFFBF6;
+                border-radius: 12px;
+            }
         """)
 
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        if not similar:
+            layout.addWidget(QLabel("Похожих ситуаций не найдено."))
+        else:
+            layout.addWidget(QLabel(f"Найдено {len(similar)} похожих ситуаций:"))
+
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+            content = QWidget()
+            content_layout = QVBoxLayout(content)
+            content_layout.setSpacing(15)
+
+            for item in similar:
+                entry = item['entry']
+                card = self.create_similar_card(item, entry)
+                content_layout.addWidget(card)
+
+            content_layout.addStretch()
+            scroll.setWidget(content)
+            layout.addWidget(scroll, 1)
+
+        close_btn = QPushButton("Закрыть")
+        close_btn.setProperty("class", "PrimaryButton")
+        close_btn.setFixedHeight(35)
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn, 0, Qt.AlignCenter)
+
+        dialog.exec_()
+
+    def create_similar_card(self, item, entry):
+        """Создать карточку похожей ситуации"""
+        card = QFrame()
+        card.setProperty("class", "Card")
+
         layout = QVBoxLayout(card)
+        layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(8)
 
         # Заголовок
-        header_frame = QFrame()
-        header_layout = QHBoxLayout(header_frame)
-        header_layout.setContentsMargins(0, 0, 0, 0)
+        header = QHBoxLayout()
+        date_label = QLabel(f"📅 {item['date']}")
+        date_label.setStyleSheet("font-weight: bold;")
+        header.addWidget(date_label)
+        header.addStretch()
+        sim_label = QLabel(f"Схожесть: {item['similarity']}%")
+        sim_label.setStyleSheet("color: #8B7355;")
+        header.addWidget(sim_label)
+        layout.addLayout(header)
 
-        # Иконка схожести
-        similarity_icon = "🎯" if tip['similarity'] > 70 else "📌" if tip['similarity'] > 40 else "📍"
-        icon_label = QLabel(similarity_icon)
-        icon_label.setStyleSheet("font-size: 16px;")
-        header_layout.addWidget(icon_label)
+        # Ситуация
+        sit_label = QLabel(f"<b>Ситуация:</b><br>{entry['situation'][:150]}...")
+        sit_label.setWordWrap(True)
+        sit_label.setTextFormat(Qt.RichText)
+        layout.addWidget(sit_label)
 
-        # Текст
-        header_text = QLabel(tip['message'])
-        header_text.setStyleSheet("font-weight: bold;")
-        header_layout.addWidget(header_text)
+        # Что помогло
+        if entry.get('alternative_thought'):
+            help_label = QLabel(f"💡 <b>Помогло:</b><br>{entry['alternative_thought'][:100]}...")
+            help_label.setWordWrap(True)
+            help_label.setTextFormat(Qt.RichText)
+            layout.addWidget(help_label)
 
-        header_layout.addStretch()
-
-        # Процент схожести
-        percent_label = QLabel(f"Схожесть: {tip['similarity']}%")
-        percent_label.setStyleSheet("color: #8B7355; font-size: 11px;")
-        header_layout.addWidget(percent_label)
-
-        layout.addWidget(header_frame)
-
-        # Детали
-        for detail in tip['details']:
-            detail_label = QLabel(detail)
-            detail_label.setWordWrap(True)
-            detail_label.setStyleSheet("color: #5A5A5A; font-size: 13px; padding-left: 20px;")
-            layout.addWidget(detail_label)
+        # Кнопка "Посмотреть"
+        view_btn = QPushButton("👁️ Подробнее")
+        view_btn.setProperty("class", "SecondaryButton")
+        view_btn.setFixedHeight(30)
+        view_btn.clicked.connect(lambda: self.view_full_entry(entry))
+        layout.addWidget(view_btn)
 
         return card
 
-    def check_for_similar_situations(self):
-        """Проверка, нужно ли искать похожие ситуации"""
+    def view_full_entry(self, entry):
+        """Просмотр полной записи"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Запись от {entry['created_at'][:10]}")
+        dialog.resize(550, 500)
+
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setSpacing(12)
+
+        # Дата
+        date_label = QLabel(f"📅 <b>{entry['created_at']}</b>")
+        date_label.setTextFormat(Qt.RichText)
+        content_layout.addWidget(date_label)
+
+        # Ситуация
+        sit_label = QLabel(f"<b>Ситуация:</b><br>{entry['situation']}")
+        sit_label.setWordWrap(True)
+        sit_label.setTextFormat(Qt.RichText)
+        content_layout.addWidget(sit_label)
+
+        # Мысли
+        if entry.get('thoughts'):
+            thought_label = QLabel(f"<b>Автоматические мысли:</b><br>{entry['thoughts']}")
+            thought_label.setWordWrap(True)
+            thought_label.setTextFormat(Qt.RichText)
+            content_layout.addWidget(thought_label)
+
+        # Эмоции
+        if entry.get('emotions'):
+            emotions_text = "<b>Эмоции:</b><br>"
+            for emotion, intensity in entry['emotions'].items():
+                if intensity > 0:
+                    emotions_text += f"• {emotion}: {intensity}%<br>"
+            emo_label = QLabel(emotions_text)
+            emo_label.setWordWrap(True)
+            emo_label.setTextFormat(Qt.RichText)
+            content_layout.addWidget(emo_label)
+
+        # Искажения
+        if entry.get('distortions'):
+            dist_text = "<b>Когнитивные искажения:</b><br>• " + "<br>• ".join(entry['distortions'])
+            dist_label = QLabel(dist_text)
+            dist_label.setWordWrap(True)
+            dist_label.setTextFormat(Qt.RichText)
+            content_layout.addWidget(dist_label)
+
+        # Альтернативная мысль
+        if entry.get('alternative_thought'):
+            alt_label = QLabel(f"<b>Альтернативная мысль:</b><br>{entry['alternative_thought']}")
+            alt_label.setWordWrap(True)
+            alt_label.setTextFormat(Qt.RichText)
+            content_layout.addWidget(alt_label)
+
+        # Переоценка
+        if entry.get('reassessment'):
+            reass_label = QLabel(f"<b>Переоценка:</b><br>{entry['reassessment']}")
+            reass_label.setWordWrap(True)
+            reass_label.setTextFormat(Qt.RichText)
+            content_layout.addWidget(reass_label)
+
+        scroll.setWidget(content)
+        layout.addWidget(scroll, 1)
+
+        close_btn = QPushButton("Закрыть")
+        close_btn.setProperty("class", "PrimaryButton")
+        close_btn.setFixedHeight(35)
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn, 0, Qt.AlignCenter)
+
+        dialog.exec_()
+
+    def show_all_similar(self):
+        """Показать все похожие (из уведомления)"""
+        self.find_similar_situations()
+
+    def on_situation_changed(self):
+        """При изменении текста - сбрасываем таймер"""
+        if self.notification_widget:
+            self.notification_widget.setVisible(False)
+
+        text_length = len(self.situation_input.toPlainText().strip())
+
+        if self.pause_timer:
+            self.pause_timer.stop()
+            self.pause_timer.deleteLater()
+            self.pause_timer = None
+
+        if text_length >= 20:
+            self.pause_timer = QTimer()
+            self.pause_timer.setSingleShot(True)
+            self.pause_timer.timeout.connect(self.on_writing_pause)
+            self.pause_timer.start(3000)
+
+    def on_writing_pause(self):
+        """Пользователь сделал паузу в письме"""
         situation = self.situation_input.toPlainText().strip()
+        if len(situation) >= 20:
+            self.find_and_show_notification(situation)
 
-        # Не ищем, если текст слишком короткий
-        if len(situation) < 20:
-            return
+    def find_and_show_notification(self, situation):
+        """Найти похожие и показать уведомление"""
+        from ai.similarity_analyzer import SimilarityAnalyzer
+        if not self.similarity_analyzer:
+            self.similarity_analyzer = SimilarityAnalyzer(self.parent.db)
 
-        # Не ищем, если уже искали недавно (защита от спама)
-        if hasattr(self, 'last_search_time'):
-            time_since_last = (datetime.now() - self.last_search_time).seconds
-            if time_since_last < 30:  # Не чаще раза в 30 секунд
-                return
+        similar = self.similarity_analyzer.find_similar_situations(
+            self.parent.current_user['id'],
+            situation,
+            limit=2
+        )
 
-        # Ищем похожие
-        self.find_similar_passively()
+        if similar:
+            self.show_notification(similar)
 
-    def find_similar_passively(self):
-        """Пассивный поиск похожих ситуаций (без диалога, только уведомление)"""
-        situation = self.situation_input.toPlainText().strip()
-
-        # Обновляем время последнего поиска
-        self.last_search_time = datetime.now()
-
-        # Показываем индикатор поиска (маленький, не навязчивый)
-        if not hasattr(self, 'search_indicator'):
-            self.search_indicator = QLabel("🔍 Поиск похожих...")
-            self.search_indicator.setProperty("class", "TextLight")
-            self.search_indicator.setAlignment(Qt.AlignRight)
-            self.search_indicator.setVisible(False)
-            # Добавить в layout рядом с кнопкой сохранения или в другое место
-
-        self.search_indicator.setVisible(True)
-        QApplication.processEvents()
-
-        try:
-            # Ищем похожие
-            from ai.similarity_analyzer import SimilarityAnalyzer
-            if not hasattr(self, 'similarity_analyzer'):
-                self.similarity_analyzer = SimilarityAnalyzer(self.parent.db)
-
-            similar = self.similarity_analyzer.find_similar_situations(
-                self.parent.current_user['id'],
-                situation,
-                limit=3
-            )
-
-            # Если нашли похожие - показываем уведомление
-            if similar:
-                self.show_similar_notification(similar)
-            else:
-                # Если не нашли - просто скрываем индикатор
-                self.search_indicator.setVisible(False)
-
-        except Exception as e:
-            print(f"Ошибка поиска: {e}")
-            self.search_indicator.setVisible(False)
-
-    def show_general_tips(self):
-        """Показать общие подсказки (когда нет похожих ситуаций)"""
-        general_tips = [
-            {
-                'icon': '🧠',
-                'title': 'Попробуйте технику "5-4-3-2-1"',
-                'text': 'Назовите 5 вещей, которые видите, 4 - чувствуете, 3 - слышите, 2 - нюхаете, 1 - пробуете'
-            },
-            {
-                'icon': '🌬️',
-                'title': 'Дыхательное упражнение',
-                'text': 'Сделайте глубокий вдох на 4 счета, задержите на 7, выдохните на 8'
-            },
-            {
-                'icon': '📝',
-                'title': 'Поиск доказательств',
-                'text': 'Спросите себя: "Какие есть доказательства ЗА и ПРОТИВ этой мысли?"'
-            }
-        ]
-
-        for tip in general_tips:
-            tip_card = QFrame()
-            tip_card.setStyleSheet("""
-                QFrame {
-                    background-color: #F8F2E9;
-                    border-radius: 10px;
-                    border: 1px solid #E8DFD8;
-                    padding: 10px;
-                }
-            """)
-
-            layout = QHBoxLayout(tip_card)
-            layout.setSpacing(10)
-
-            icon_label = QLabel(tip['icon'])
-            icon_label.setStyleSheet("font-size: 24px;")
-            layout.addWidget(icon_label)
-
-            text_widget = QWidget()
-            text_layout = QVBoxLayout(text_widget)
-            text_layout.setSpacing(5)
-            text_layout.setContentsMargins(0, 0, 0, 0)
-
-            title = QLabel(tip['title'])
-            title.setStyleSheet("font-weight: bold;")
-            text_layout.addWidget(title)
-
-            desc = QLabel(tip['text'])
-            desc.setWordWrap(True)
-            desc.setProperty("class", "TextSecondary")
-            text_layout.addWidget(desc)
-
-            layout.addWidget(text_widget, 1)
-
-            self.tips_container_layout.addWidget(tip_card)
-
-    def show_similar_notification(self, similar):
-        """Показать ненавязчивое уведомление о похожих ситуациях"""
-        # Скрываем индикатор поиска
-        self.search_indicator.setVisible(False)
-
-        # Создаем или обновляем виджет с уведомлением
-        if not hasattr(self, 'notification_widget'):
-            self.notification_widget = QFrame()
-            self.notification_widget.setProperty("class", "MintCard")
-            self.notification_widget.setCursor(Qt.PointingHandCursor)
-
-            # Добавляем в layout (например, над кнопкой сохранения)
-            # Найдите место в вашем layout и добавьте
-
-            layout = QVBoxLayout(self.notification_widget)
-            layout.setContentsMargins(15, 15, 15, 15)
-            layout.setSpacing(10)
-
-            # Заголовок
-            title_frame = QFrame()
-            title_layout = QHBoxLayout(title_frame)
-            title_layout.setContentsMargins(0, 0, 0, 0)
-
-            icon = QLabel("💡")
-            icon.setStyleSheet("font-size: 20px;")
-            title_layout.addWidget(icon)
-
-            title = QLabel("Найдены похожие ситуации")
-            title.setStyleSheet("font-weight: bold; font-size: 14px;")
-            title_layout.addWidget(title)
-            title_layout.addStretch()
-
-            close_btn = QPushButton("✕")
-            close_btn.setFixedSize(20, 20)
-            close_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: transparent;
-                    border: none;
-                    color: #C4B6A6;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    color: #FF6B6B;
-                }
-            """)
-            close_btn.clicked.connect(lambda: self.notification_widget.setVisible(False))
-            title_layout.addWidget(close_btn)
-
-            layout.addWidget(title_frame)
-
-            # Контейнер для списка похожих
-            self.notification_list = QVBoxLayout()
-            layout.addLayout(self.notification_list)
-
-            # Кнопка "Показать все"
-            show_all_btn = QPushButton("🔍 Показать все похожие")
-            show_all_btn.setProperty("class", "SecondaryButton")
-            show_all_btn.setFixedHeight(30)
-            show_all_btn.clicked.connect(lambda: self.find_similar_situations(manual=True))
-            layout.addWidget(show_all_btn)
-
-            # Добавляем в основной layout (после эмоций, например)
-            # Найдите подходящее место в вашем интерфейсе
-
+    def show_notification(self, similar):
+        """Показать уведомление с похожими ситуациями"""
         # Очищаем старый список
         while self.notification_list.count():
             item = self.notification_list.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        # Добавляем первые 2 похожие ситуации
-        for i, item in enumerate(similar[:2]):
+        for item in similar[:2]:
             entry = item['entry']
 
             item_frame = QFrame()
@@ -822,30 +688,24 @@ class DiaryWindow(QWidget):
             item_layout = QVBoxLayout(item_frame)
             item_layout.setSpacing(3)
 
-            # Дата и схожесть
-            header = QFrame()
-            header_layout = QHBoxLayout(header)
-            header_layout.setContentsMargins(0, 0, 0, 0)
-
+            # Дата
+            header = QHBoxLayout()
             date_label = QLabel(f"📅 {item['date']}")
             date_label.setStyleSheet("font-size: 11px; font-weight: bold;")
-            header_layout.addWidget(date_label)
-
-            header_layout.addStretch()
-
+            header.addWidget(date_label)
+            header.addStretch()
             sim_label = QLabel(f"{item['similarity']}%")
             sim_label.setStyleSheet("color: #8B7355; font-size: 11px;")
-            header_layout.addWidget(sim_label)
+            header.addWidget(sim_label)
+            item_layout.addLayout(header)
 
-            item_layout.addWidget(header)
-
-            # Ситуация (очень коротко)
+            # Ситуация
             sit_label = QLabel(item['situation'][:60] + "...")
-            sit_label.setStyleSheet("font-size: 11px; color: #5A5A5A;")
+            sit_label.setStyleSheet("font-size: 11px;")
             sit_label.setWordWrap(True)
             item_layout.addWidget(sit_label)
 
-            # Что помогло (если есть)
+            # Что помогло
             if entry.get('alternative_thought'):
                 help_label = QLabel(f"💡 {entry['alternative_thought'][:50]}...")
                 help_label.setStyleSheet("font-size: 10px; color: #06D6A0;")
@@ -861,44 +721,107 @@ class DiaryWindow(QWidget):
 
             self.notification_list.addWidget(item_frame)
 
-        # Показываем уведомление
         self.notification_widget.setVisible(True)
 
-    def on_situation_changed(self):
-        """При изменении текста - только сбрасываем таймер"""
-        # Скрываем уведомление, если текст изменился
-        if hasattr(self, 'notification_widget'):
-            self.notification_widget.setVisible(False)
+    # ==================== СОХРАНЕНИЕ ЗАПИСИ ====================
 
-        # Активируем/деактивируем кнопку
-        text_length = len(self.situation_input.toPlainText().strip())
+    def save_entry(self):
+        """Сохранение записи в дневнике"""
+        try:
+            if not self.parent.current_user:
+                QMessageBox.warning(self, "Ошибка", "Вы не авторизованы.")
+                return
 
-        # Сбрасываем таймер для паузы
-        if hasattr(self, 'pause_timer') and self.pause_timer:
-            self.pause_timer.stop()
-            self.pause_timer.deleteLater()
+            situation = self.situation_input.toPlainText().strip()
+            thoughts = self.thoughts_input.toPlainText().strip()
 
-        # Если текст достаточно длинный, запускаем таймер паузы
-        if text_length >= 20:
-            self.pause_timer = QTimer()
-            self.pause_timer.setSingleShot(True)
-            self.pause_timer.timeout.connect(self.on_writing_pause)
-            self.pause_timer.start(5000)  # 5 секунды паузы
+            if not situation or not thoughts:
+                QMessageBox.warning(self, "Внимание",
+                                    "Заполните обязательные поля: Ситуация и Автоматические мысли.")
+                return
 
-    def on_emotion_focus(self, emotion):
-        """Когда пользователь начинает заполнять эмоции"""
-        self.check_for_similar_situations()
+            # Собираем данные
+            emotions_data = {emotion: slider.value() for emotion, slider in self.emotion_inputs.items()}
+            distortions = [name for name, checkbox in self.distortion_checks.items() if checkbox.isChecked()]
+            alternative = self.alternative_input.toPlainText().strip()
+            reassessment = self.reassessment_input.toPlainText().strip()
 
-    def on_thoughts_focused(self):
-        """Когда пользователь переходит к полю мыслей"""
-        self.check_for_similar_situations()
+            # Сохраняем
+            user_id = self.parent.current_user['id']
+            entry_id = self.parent.db.save_diary_entry(
+                user_id=user_id,
+                situation=situation,
+                emotions=emotions_data,
+                thoughts=thoughts,
+                distortions=distortions,
+                alternative_thought=alternative if alternative else None,
+                reassessment=reassessment if reassessment else None
+            )
 
-    def on_writing_pause(self):
-        """Пользователь сделал паузу в письме"""
-        self.check_for_similar_situations()
+            if entry_id:
+                self.update_stats(user_id)
+                self.update_streak_days()
+                self.clear_form()
+
+                QMessageBox.information(self, "Сохранено",
+                                        f"✅ Запись успешно сохранена!\n"
+                                        f"Выявлено искажений: {len(distortions)}")
+            else:
+                QMessageBox.warning(self, "Ошибка", "Не удалось сохранить запись")
+
+        except Exception as e:
+            print(f"Ошибка сохранения: {e}")
+            QMessageBox.critical(self, "Ошибка", f"Ошибка: {str(e)}")
+
+    def update_stats(self, user_id):
+        """Обновление статистики"""
+        stats = self.parent.db.get_user_stats(user_id)
+        if stats:
+            new_total = stats["total_entries"] + 1
+            self.parent.db.update_user_stats(user_id, {'total_entries': new_total})
+
+        # Проверяем достижения
+        new_achievements = self.parent.db.check_achievements(user_id)
+        if new_achievements:
+            self.show_achievement_notification(new_achievements)
+
+    def update_streak_days(self):
+        """Обновление дней подряд"""
+        user_id = self.parent.current_user['id']
+        stats = self.parent.db.get_user_stats(user_id)
+        today = datetime.now().strftime('%Y-%m-%d')
+        last_date = stats.get('last_activity_date')
+
+        if last_date:
+            last_dt = datetime.strptime(last_date, '%Y-%m-%d')
+            today_dt = datetime.strptime(today, '%Y-%m-%d')
+            if (today_dt - last_dt).days == 1:
+                new_streak = stats['streak_days'] + 1
+            elif (today_dt - last_dt).days == 0:
+                new_streak = stats['streak_days']
+            else:
+                new_streak = 1
+        else:
+            new_streak = 1
+
+        self.parent.db.update_user_stats(user_id, {
+            'streak_days': new_streak,
+            'last_activity_date': today
+        })
+
+    def clear_form(self):
+        """Очистка формы"""
+        self.situation_input.clear()
+        self.thoughts_input.clear()
+        self.alternative_input.clear()
+        self.reassessment_input.clear()
+        for slider in self.emotion_inputs.values():
+            slider.setValue(0)
+        for checkbox in self.distortion_checks.values():
+            checkbox.setChecked(False)
 
     def show_achievement_notification(self, achievements):
-        """Показать уведомление о новых достижениях"""
+        """Показать уведомление о достижении"""
         if not achievements:
             return
 

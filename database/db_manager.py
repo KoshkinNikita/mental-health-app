@@ -147,11 +147,22 @@ class DatabaseManager:
                 user_id INTEGER NOT NULL,
                 entry_id INTEGER NOT NULL,
                 exercise_name TEXT NOT NULL,
-                helped INTEGER DEFAULT 0,  -- 1 = помогло, -1 = не помогло, 0 = не оценено
-                feedback_text TEXT,
+                helped INTEGER DEFAULT 0,  -- 1=помогло, -1=не помогло, 0=не оценено
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id),
                 FOREIGN KEY (entry_id) REFERENCES diary_entries (id)
+            )
+        ''')
+
+        # Таблица для "черного списка" практик (не помогло)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ineffective_practices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                context_key TEXT,  -- ключевые слова из ситуации
+                exercise_name TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
             )
         ''')
 

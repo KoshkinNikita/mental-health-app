@@ -162,6 +162,27 @@ class SimilarityAnalyzer:
 
         return min(100, score)
 
+    def get_effective_exercises_for_entry(self, entry_id):
+        """Получить только эффективные практики"""
+        cursor = self.db.conn.cursor()
+        cursor.execute('''
+            SELECT exercise_name 
+            FROM exercise_feedback 
+            WHERE entry_id = ? AND helped = 1
+        ''', (entry_id,))
+        return [row['exercise_name'] for row in cursor.fetchall()]
+
+    def get_ineffective_exercises(self, user_id):
+        """Получить практики, которые не помогли"""
+        cursor = self.db.conn.cursor()
+        cursor.execute('''
+            SELECT exercise_name 
+            FROM exercise_feedback 
+            WHERE user_id = ? AND helped = -1
+            GROUP BY exercise_name
+        ''', (user_id,))
+        return [row['exercise_name'] for row in cursor.fetchall()]
+
     def get_tips_for_situation(self, user_id, situation, emotions=None):
         """
         Генерация подсказок для текущей записи

@@ -472,78 +472,167 @@ class ExerciseSessionWindow(QDialog):
 
     def ask_for_entry_link(self):
         """Спросить пользователя, с какой записью связано упражнение"""
-        # Получаем последние записи
-        entries = self.parent_app.db.get_diary_entries(
-            self.parent_app.current_user['id'],
-            limit=10
-        )
+        try:
+            # Получаем последние записи
+            entries = self.parent_app.db.get_diary_entries(
+                self.parent_app.current_user['id'],
+                limit=5
+            )
 
-        if not entries:
-            # Если записей нет, просто завершаем
+            if not entries:
+                # Если записей нет, просто завершаем
+                QMessageBox.information(self, "Поздравляю!",
+                                        f"✅ Вы успешно выполнили упражнение!\n\n"
+                                        f"Продолжайте практиковаться для лучших результатов.")
+                self.accept()
+                return
+
+            # Создаем диалог
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Связь с записью")
+            dialog.setFixedSize(500, 400)
+            dialog.setStyleSheet("""
+                QDialog {
+                    background-color: #FFFBF6;
+                    border-radius: 12px;
+                }
+                QLabel {
+                    color: #2C3E50;
+                }
+                QPushButton {
+                    font-size: 14px;
+                }
+            """)
+
+            layout = QVBoxLayout(dialog)
+            layout.setSpacing(15)
+            layout.setContentsMargins(20, 20, 20, 20)
+
+            # Заголовок
+            title = QLabel("📝 Связать с записью в дневнике?")
+            title.setStyleSheet("font-size: 16px; font-weight: bold;")
+            layout.addWidget(title)
+
+            description = QLabel(
+                "Это упражнение было выполнено для работы над какой-то конкретной ситуацией?\n\n"
+                "Если да, выберите запись из списка. Это поможет системе лучше понимать, "
+                "что вам помогает."
+            )
+            description.setWordWrap(True)
+            description.setProperty("class", "TextSecondary")
+            layout.addWidget(description)
+
+            # Список записей
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+            entries_widget = QWidget()
+            entries_layout = QVBoxLayout(entries_widget)
+            entries_layout.setSpacing(10)
+
+            # Кнопка "Без связи"
+            none_btn = QPushButton("⏭️ Это упражнение не связано с конкретной записью")
+            none_btn.setProperty("class", "SecondaryButton")
+            none_btn.clicked.connect(lambda: self.link_to_entry(dialog, None))
+            entries_layout.addWidget(none_btn)
+
+            # Разделитель
+            separator = QFrame()
+            separator.setFrameShape(QFrame.HLine)
+            separator.setStyleSheet("background-color: #E8DFD8; max-height: 1px;")
+            entries_layout.addWidget(separator)
+
+            # Записи
+            for entry in entries:
+                entry_card = self.create_entry_card_for_link(entry, dialog)
+                entries_layout.addWidget(entry_card)
+
+            scroll.setWidget(entries_widget)
+            layout.addWidget(scroll, 1)
+
+            dialog.exec_()
+
+        except Exception as e:
+            print(f"Ошибка в ask_for_entry_link: {e}")
+            import traceback
+            traceback.print_exc()
+            # Если ошибка, просто завершаем упражнение
             QMessageBox.information(self, "Поздравляю!",
                                     f"✅ Вы успешно выполнили упражнение!\n\n"
                                     f"Продолжайте практиковаться для лучших результатов.")
             self.accept()
-            return
 
-        # Создаем диалог
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Связь с записью")
-        dialog.setFixedSize(500, 400)
-        dialog.setStyleSheet("""
-            QDialog {
-                background-color: #FFFBF6;
-                border-radius: 12px;
-            }
-        """)
+    def save_link(self, dialog, entry_id):
+        """Сохранить связь упражнения с записью"""
+        dialog.close()
 
-        layout = QVBoxLayout(dialog)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+        if entry_id and self.parent_app and self.parent_app.current_user:
+            # Сохраняем как "не оценено" - пользователь оценит позже
+            self.parent_app.db.save_exercise_feedback(
+                user_id=self.parent_app.current_user['id'],
+                entry_id=entry_id,
+                exercise_name=self.exercise.name,
+                helped=None  # еще не оценено
+            )
 
-        # Заголовок
-        title = QLabel("📝 Связать с записью в дневнике?")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #5A5A5A;")
-        layout.addWidget(title)
+            # Спрашиваем, помогло ли?
+            self.ask_if_helped(entry_id)
+        else:
+            self.show_finish_message()
 
-        description = QLabel(
-            "Это упражнение было выполнено для работы над какой-то конкретной ситуацией? "
-            "Если да, выберите запись из списка. Это поможет системе лучше понимать, "
-            "что вам помогает."
-        )
-        description.setWordWrap(True)
-        description.setProperty("class", "TextSecondary")
-        layout.addWidget(description)
+    def ask_if_helped(self, entry_id):
+        """Спросить, помогло ли упражнение"""
+        try:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Помогло?")
+            msg.setText(f"Упражнение '{self.exercise.name}' помогло с этой ситуацией?")
+            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
 
-        # Список записей
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            result = msg.exec_()
 
-        entries_widget = QWidget()
-        entries_layout = QVBoxLayout(entries_widget)
-        entries_layout.setSpacing(10)
+            # Обновляем оценку
+            helped = 1 if result == QMessageBox.Yes else -1
 
-        # Кнопка "Без связи"
-        none_btn = QPushButton("⏭️ Это упражнение не связано с конкретной записью")
-        none_btn.setProperty("class", "SecondaryButton")
-        none_btn.clicked.connect(lambda: self.link_to_entry(dialog, None))
-        entries_layout.addWidget(none_btn)
+            # Находим последнюю запись feedback для этого упражнения и записи
+            cursor = self.parent_app.db.conn.cursor()
 
-        # Разделитель
-        separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
-        separator.setStyleSheet("background-color: #E8DFD8;")
-        separator.setFixedHeight(1)
-        entries_layout.addWidget(separator)
+            # Сначала находим ID нужной записи
+            cursor.execute('''
+                SELECT id FROM exercise_feedback 
+                WHERE entry_id = ? AND exercise_name = ? AND user_id = ?
+                ORDER BY created_at DESC LIMIT 1
+            ''', (entry_id, self.exercise.name, self.parent_app.current_user['id']))
 
-        # Записи
-        for entry in entries:
-            entry_card = self.create_entry_card_for_link(entry, dialog)
-            entries_layout.addWidget(entry_card)
+            row = cursor.fetchone()
 
-        scroll.setWidget(entries_widget)
-        layout.addWidget(scroll, 1)
+            if row:
+                # Обновляем найденную запись
+                cursor.execute('''
+                    UPDATE exercise_feedback 
+                    SET helped = ? 
+                    WHERE id = ?
+                ''', (helped, row['id']))
+                self.parent_app.db.conn.commit()
+
+            # Показываем финальное сообщение
+            if helped == 1:
+                QMessageBox.information(self, "Спасибо!",
+                                        "✅ Спасибо за обратную связь! "
+                                        "Система запомнит, что это упражнение помогло.")
+            else:
+                QMessageBox.information(self, "Спасибо!",
+                                        "📝 Спасибо за обратную связь! "
+                                        "Система запомнит, что это упражнение не помогло, "
+                                        "и в следующий раз предложит что-то другое.")
+
+            self.accept()
+
+        except Exception as e:
+            print(f"Ошибка в ask_if_helped: {e}")
+            import traceback
+            traceback.print_exc()
+            self.accept()
 
     def create_entry_card_for_link(self, entry, dialog):
         """Создать карточку записи для выбора"""
@@ -583,33 +672,47 @@ class ExerciseSessionWindow(QDialog):
         select_btn = QPushButton("✅ Выбрать эту запись")
         select_btn.setProperty("class", "SecondaryButton")
         select_btn.setFixedHeight(30)
-        select_btn.clicked.connect(lambda: self.link_to_entry(dialog, entry['id']))
+        # Используем lambda с сохранением entry_id
+        entry_id = entry['id']
+        select_btn.clicked.connect(lambda checked, eid=entry_id, dlg=dialog: self.link_to_entry(dlg, eid))
         layout.addWidget(select_btn)
 
         return card
 
     def link_to_entry(self, dialog, entry_id):
         """Связать упражнение с записью"""
-        dialog.accept()
+        try:
+            dialog.accept()
 
-        # Сохраняем связь (пока без оценки)
-        if entry_id and self.parent_app and self.parent_app.current_user:
-            self.parent_app.db.save_exercise_feedback(
-                user_id=self.parent_app.current_user['id'],
-                entry_id=entry_id,
-                exercise_name=self.exercise.name,
-                helped=None,  # Пока не оценено
-                feedback_text=None
-            )
+            # Сохраняем связь
+            if entry_id and self.parent_app and self.parent_app.current_user:
+                self.parent_app.db.save_exercise_feedback(
+                    user_id=self.parent_app.current_user['id'],
+                    entry_id=entry_id,
+                    exercise_name=self.exercise.name,
+                    helped=None,  # Пока не оценено
+                    feedback_text=None
+                )
 
-            # Предлагаем оценить позже
-            QMessageBox.information(self, "Связь сохранена",
-                                    f"✅ Связь с записью сохранена!\n\n"
-                                    f"Позже в истории записей вы сможете оценить, "
-                                    f"насколько это упражнение помогло."
-                                    )
+                # Спрашиваем, помогло ли?
+                self.ask_if_helped(entry_id)
+            else:
+                # Если не связали, просто завершаем
+                QMessageBox.information(self, "Поздравляю!",
+                                        f"✅ Вы успешно выполнили упражнение!\n\n"
+                                        f"Продолжайте практиковаться для лучших результатов.")
+                self.accept()
 
-        # Завершаем упражнение
+        except Exception as e:
+            print(f"Ошибка в link_to_entry: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.information(self, "Поздравляю!",
+                                    f"✅ Вы успешно выполнили упражнение!")
+            self.accept()
+
+    def show_finish_message(self):
+        """Показать сообщение о завершении"""
         QMessageBox.information(self, "Поздравляю!",
                                 f"✅ Вы успешно выполнили упражнение!\n\n"
                                 f"Продолжайте практиковаться для лучших результатов.")
